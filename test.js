@@ -153,6 +153,40 @@ assert.deepStrictEqual(L.parseMessage('Dentiste lundi à 17h30', sat), { type: '
 assert.deepStrictEqual(L.parseMessage('rappel Anniversaire de maman le 12/11', sat), { type: 'reminder', title: 'Anniversaire de maman', date: '2026-11-12', time: '10:00' });
 assert.deepStrictEqual(L.parseMessage('rappel Prendre les clés', sat), { type: 'reminder', title: 'Prendre les clés', date: '2026-10-31', time: '11:00' });
 
+// Message d'un proche → élément prêt à ajouter, id stable (pas de doublon PC / téléphone).
+const mi = L.messageToItem({ id: 'abc', message: 'rappel Appeler le garage demain 10h' }, sat, 'Sam');
+assert.strictEqual(mi.coll, 'reminders'); assert.strictEqual(mi.item.id, 'kabc');
+assert.strictEqual(mi.item.due, d('2026-11-01T10:00').toISOString());
+assert.strictEqual(mi.item.notes[0].text, 'Envoyé par Sam');
+assert.strictEqual(L.messageToItem({ id: 'x', message: 'Pain' }, sat, 'Sam').coll, 'tasks');
+
+// Notifications programmées à l'avance (Android), vendredi 30 octobre 2026 à 10:00.
+const P = { ...L.DEFAULT_SETTINGS, quietStart: '01:30', quietEnd: '09:30', checkins: '', modules: { ...L.DEFAULT_SETTINGS.modules, soir: false } };
+const fri = d('2026-10-30T10:00');
+const planOf = (o, now = fri) => L.planNotifications(L.normalize({ settings: P, ...o }), now);
+// Un rappel à 11:00 relancé toutes les 10 min : la 1re fois + 5 relances.
+let plan = planOf({ reminders: [{ id: 'r', title: 'Facture', kind: 'once', date: '2026-10-30', time: '11:00', due: d('2026-10-30T11:00').toISOString(), nag: 10 }] });
+assert.deepStrictEqual(plan.map(p => [p.kind, L.clock(p.at)]), [['reminder', '11:00'], ['nag', '11:10'], ['nag', '11:20'], ['nag', '11:30'], ['nag', '11:40'], ['nag', '11:50']]);
+assert.ok(plan.every(p => Number.isInteger(p.id)) && new Set(plan.map(p => p.id)).size === 6);
+// Pendant les heures calmes : décalé à la fin (09:30), sauf s'il est urgent.
+plan = planOf({ reminders: [{ id: 'q', title: 'Q', kind: 'once', date: '2026-10-31', time: '03:00', due: d('2026-10-31T03:00').toISOString(), nag: 0 }] });
+assert.deepStrictEqual(plan.map(p => p.at), [d('2026-10-31T09:30')]);
+plan = planOf({ reminders: [{ id: 'u', title: 'U', kind: 'once', date: '2026-10-31', time: '03:00', due: d('2026-10-31T03:00').toISOString(), nag: 0, urgent: true }] });
+assert.deepStrictEqual(plan.map(p => [p.at, p.mode]), [[d('2026-10-31T03:00'), 'urgent']]);
+// Pro un samedi : reporté au lundi 09:00 (début du travail).
+plan = planOf({ reminders: [{ id: 'p', title: 'P', sphere: 'pro', kind: 'once', date: '2026-10-31', time: '15:00', due: d('2026-10-31T15:00').toISOString(), nag: 0 }] });
+assert.deepStrictEqual(plan.map(p => p.at), [d('2026-11-02T09:30')]); // 09:00 est encore dans les heures calmes
+// Déjà notifié : seulement les relances suivantes.
+plan = planOf({ reminders: [{ id: 'f', title: 'F', kind: 'once', date: '2026-10-30', time: '09:45', due: d('2026-10-30T09:45').toISOString(), lastFired: d('2026-10-30T09:55').toISOString(), nag: 10 }] });
+assert.strictEqual(plan[0].kind, 'nag'); assert.deepStrictEqual(plan[0].at, d('2026-10-30T10:05'));
+// Événement 15 min avant, anniversaire le matin au lever, tâche à l'heure.
+plan = planOf({ events: [weeklyMeeting, { id: 'a', title: 'Anniv', date: '2026-11-01', allDay: true, repeat: 'yearly' }],
+  tasks: [{ id: 't', title: 'Devis', date: '2026-10-30', time: '14:00' }] }, d('2026-11-01T09:00'));
+assert.deepStrictEqual(plan.map(p => [p.kind, p.at]).slice(0, 2), [['event', d('2026-11-01T10:30')], ['event', d('2026-11-02T09:45')]]);
+// Check-ins quotidiens, pas pendant les heures calmes, pas deux fois le même jour.
+plan = planOf({ settings: { ...P, checkins: '13:00' }, fired: { 'checkin-13:00': '2026-10-30' } });
+assert.deepStrictEqual(plan.slice(0, 2).map(p => p.at), [d('2026-10-31T13:00'), d('2026-11-01T13:00')]);
+
 // Données abîmées ou vides → structure saine.
 assert.strictEqual(L.normalize(null).settings.phone.server, 'https://ntfy.sh');
 assert.strictEqual(L.normalize({ settings: { modules: { soir: false } } }).settings.modules.focus, true);

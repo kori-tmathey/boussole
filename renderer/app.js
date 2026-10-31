@@ -6,6 +6,9 @@ let teteTab = 'tri';
 let shortcutOk = true;
 let pendingRender = false;
 let lastTitlebar = '';
+const MOBILE = api.platform === 'android'; // même interface, quelques adaptations pour le téléphone
+let navMore = false;
+document.documentElement.classList.toggle('mobile', MOBILE);
 let sphereOverride = null; // choix manuel en mode auto, valable jusqu'au prochain changement d'horaire
 let lastAuto = null;
 let lastSphere = null;
@@ -122,7 +125,7 @@ function render() {
   $('#nav').innerHTML = navHTML();
   const v = $('#view');
   v.dataset.sec = view;
-  v.innerHTML = `<div class="wrap ${view === 'agenda' ? 'wide' : ''}">${PAGES[view]()}</div>`;
+  v.innerHTML = `<div class="wrap ${view === 'agenda' ? 'wide' : ''}">${MOBILE ? `<div class="mobile-top">${sphereSwitch()}</div>` : ''}${PAGES[view]()}</div>`;
   renderSheet();
   updateFocusUI();
   if (view === 'reglages') { fillBackupStatus(); fillLinkStatus(); fillUpdateStatus(); }
@@ -152,6 +155,17 @@ function navHTML() {
       ${svg(k)}<span>${label}</span>
       ${k === 'focus' ? '<span class="badge timer" id="nav-timer"></span>' : badge[k] ? `<span class="badge">${badge[k]}</span>` : ''}
     </button>`;
+  if (MOBILE) {
+    // Téléphone : 4 écrans principaux + « Plus » pour le reste.
+    const main = ['aujourdhui', 'agenda', 'rappels', 'tete'];
+    const all = [...NAV.filter(n => enabled(n[0])), ['reglages', 'Réglages']];
+    const more = all.filter(n => !main.includes(n[0]));
+    const inMore = more.some(n => n[0] === view);
+    return `${all.filter(n => main.includes(n[0])).map(item).join('')}
+      <button class="nav-item ${inMore || navMore ? 'on' : ''}" data-act="navMore" aria-expanded="${navMore}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>Plus</span></button>
+      ${navMore ? `<div class="nav-more">${more.map(item).join('')}</div>` : ''}`;
+  }
   return `<div class="brand"><img src="../build/icon.png" alt="">Boussole</div>
     ${sphereSwitch()}
     ${NAV.filter(n => enabled(n[0])).map(item).join('')}
@@ -450,9 +464,13 @@ function pageFocus() {
     </div>`;
 }
 
+// Sur le téléphone, la fin du focus est programmée par Android : elle sonne même écran éteint.
+const focusAlarm = () => MOBILE && api.focusAlarm(F.running ? new Date(F.endAt) : null, L.msg(S().tone, 'focusEnd'), F.label, defaultSphere());
+
 function fStart(min, label) {
   if (label !== undefined) F.label = label;
   F.total = min * L.MIN; F.left = F.total; F.endAt = Date.now() + F.total; F.running = true;
+  focusAlarm();
   view = 'focus'; render();
 }
 
@@ -460,7 +478,7 @@ function fFinish() {
   F.running = false; F.left = 0;
   const m = Math.round(F.total / L.MIN);
   const what = `${m} min de focus${F.label ? ' : ' + F.label : ''}`;
-  api.notify(L.msg(S().tone, 'focusEnd'), what, 'focus', defaultSphere());
+  if (!MOBILE) api.notify(L.msg(S().tone, 'focusEnd'), what, 'focus', defaultSphere());
   L.addWin(D, what, new Date());
   save();
   celebrate();
@@ -489,7 +507,7 @@ function pageTete() {
   const mine = D.ideas.filter(inSphere);
   const tri = mine.filter(i => !i.parked), park = mine.filter(i => i.parked);
   const list = teteTab === 'tri' ? tri : park;
-  return head('Vide-tête', `Sors-le de ta tête, il est en sécurité ici. Partout dans Windows : ${fmtShortcut(S().shortcut)}.`) + `
+  return head('Vide-tête', MOBILE ? 'Sors-le de ta tête, il est en sécurité ici.' : `Sors-le de ta tête, il est en sécurité ici. Partout dans Windows : ${fmtShortcut(S().shortcut)}.`) + `
     <form class="dump" data-form="idea">
       <textarea name="text" rows="3" data-enter placeholder="Ce qui te traverse l'esprit… (Entrée pour ranger, Maj+Entrée pour une nouvelle ligne)" aria-label="Nouvelle pensée"></textarea>
       <button class="btn">Ranger</button>
@@ -808,14 +826,20 @@ function pageSettings() {
       ${row('Météo intérieure', chk('modules.meteo'), 'Avec les notifications de check-in.')}
     </section>
 
-    <section><h2 class="sec-title">Windows</h2>
+    <section class="pc-only"><h2 class="sec-title">Windows</h2>
       ${row('Lancer au démarrage de Windows', chk('autostart'), 'Actif une fois l\'appli installée.')}
       ${row('Démarrer réduit dans la barre des tâches', chk('startHidden'))}
       ${row('Fermer la fenêtre = la garder près de l\'horloge', chk('closeToTray'), 'Sinon, les rappels s\'arrêtent quand tu fermes.')}
       ${row('Raccourci du vide-tête', inp('shortcut'), shortcutOk ? '<span class="ok">Raccourci actif.</span>' : '<span class="warn">Ce raccourci est déjà pris. Essaie Alt+Shift+Space ou Control+Alt+N.</span>')}
     </section>
 
-    <section><h2 class="sec-title">Sur ton téléphone</h2>
+    <section class="android-only"><h2 class="sec-title">Notifications Android</h2>
+      ${row('Autoriser les notifications', '<button type="button" class="btn small soft" data-act="androidPerm">Autoriser</button>', 'Sans ça, rien ne peut sonner.')}
+      ${row('Rappels pile à l\'heure', '<button type="button" class="btn small ghost" data-act="androidExact">Ouvrir le réglage</button>', 'Autorise les « alarmes exactes » pour Boussole.')}
+      <p class="hint" style="margin-top:10px">Si les rappels arrivent en retard : Paramètres du téléphone > Applications > Boussole > Batterie > « Sans restriction ». Sur Xiaomi, Samsung ou Huawei, c'est souvent nécessaire.</p>
+    </section>
+
+    <section class="pc-only"><h2 class="sec-title">Sur ton téléphone</h2>
       ${row('Recevoir aussi les notifications sur mon téléphone', `<input type="checkbox" class="switch" data-act="phoneToggle" ${s.phone.enabled ? 'checked' : ''}>`,
         'Avec ntfy : gratuit, open source, sans compte. Le carillon reste sur l\'ordinateur.')}
       ${s.phone.enabled ? `
@@ -846,12 +870,15 @@ function pageSettings() {
         <p class="hint" style="margin-top:8px">Boussole regarde toutes les 30 secondes et répond « ✓ Reçu » à chaque message.</p>` : ''}
     </section>
 
-    <section><h2 class="sec-title">Mises à jour</h2>
+    <section class="pc-only"><h2 class="sec-title">Mises à jour</h2>
       ${row('Mises à jour automatiques', '<button type="button" class="btn small ghost" data-act="updateCheck">Vérifier maintenant</button>',
         '<span id="update-status"></span> Les nouvelles versions se téléchargent toutes seules et s\'installent à la fermeture.')}
     </section>
+    <section class="android-only"><h2 class="sec-title">Mises à jour</h2>
+      <p class="sub" style="margin:0">Avec l'appli gratuite <b>Obtainium</b> : ajoute <code>github.com/kori-tmathey/boussole</code>, elle te propose chaque nouvelle version en un geste.</p>
+    </section>
 
-    <section><h2 class="sec-title">Sauvegardes et données</h2>
+    <section class="pc-only"><h2 class="sec-title">Sauvegardes et données</h2>
       ${row('Sauvegarde automatique', '<button type="button" class="btn small ghost" data-act="dataFolder">Ouvrir le dossier</button>', 'Une copie par jour sur cet ordinateur, les 7 derniers jours. Rien n\'est envoyé sur Internet.')}
       ${row('Copie dans ton cloud', s.backupDir
         ? '<span class="row"><button type="button" class="btn small ghost" data-act="pickBackup">Changer</button><button type="button" class="link" data-act="backupOff">Retirer</button></span>'
@@ -936,7 +963,10 @@ const randomTopic = () => 'boussole-' + Array.from(crypto.getRandomValues(new Ui
 
 const ACT = {
   ...AGENDA_ACT,
-  go: d => { view = d.view; render(); $('#view').scrollTop = 0; },
+  go: d => { view = d.view; navMore = false; render(); $('#view').scrollTop = 0; },
+  navMore: () => { navMore = !navMore; render(); },
+  androidPerm: async () => toast((await api.askNotifications?.()) || 'Autorisation demandée.'),
+  androidExact: () => api.exactAlarms?.(),
   sphere: d => {
     if (S().sphereMode === 'auto') { sphereOverride = d.k === L.autoSphere(S(), new Date()) ? null : d.k; render(); }
     else { S().sphereView = d.k; save(); }
@@ -988,9 +1018,9 @@ const ACT = {
 
   fset: d => { F.total = Number(d.m) * L.MIN; F.left = F.total; render(); },
   fstart: () => fStart(Math.round((F.total || S().focusDefault * L.MIN) / L.MIN)),
-  fpause: () => { F.left = F.endAt - Date.now(); F.running = false; render(); },
-  fresume: () => { F.endAt = Date.now() + F.left; F.running = true; render(); },
-  fstop: () => { F.running = false; F.left = F.total; render(); },
+  fpause: () => { F.left = F.endAt - Date.now(); F.running = false; focusAlarm(); render(); },
+  fresume: () => { F.endAt = Date.now() + F.left; F.running = true; focusAlarm(); render(); },
+  fstop: () => { F.running = false; F.left = F.total; focusAlarm(); render(); },
 
   tab: d => { teteTab = d.t; render(); },
   ideaTask: d => {
@@ -1157,6 +1187,13 @@ document.addEventListener('focusout', () => setTimeout(() => {
 api.on('data', d => { D = d; if (isBusy()) pendingRender = true; else render(); });
 api.on('goto', v => { view = v; render(); });
 api.on('sound', sphere => playSound(S().spheres[sphere]?.sound));
+// Bouton retour d'Android : fermer la fiche, le menu « Plus », revenir à Aujourd'hui, puis réduire l'appli.
+api.on('back', () => {
+  if (sheet) ACT.closeSheet();
+  else if (navMore) { navMore = false; render(); }
+  else if (view !== 'aujourdhui') { view = 'aujourdhui'; render(); }
+  else api.hideMain();
+});
 
 // Rafraîchit l'horloge, le rail, l'agenda, la sphère automatique et le thème du soir.
 setInterval(() => {

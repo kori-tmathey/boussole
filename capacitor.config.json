@@ -1,0 +1,14 @@
+{
+  "appId": "fr.theo.boussole",
+  "appName": "Boussole",
+  "webDir": "mobile/www",
+  "android": {
+    "backgroundColor": "#E6EDEF"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_boussole",
+      "iconColor": "#2B7A7E"
+    }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "name": "boussole",
   "productName": "Boussole",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Une boussole pour le TDAH : rappels, agenda perso/pro, focus, vide-tête, soir et météo intérieure",
   "main": "main.js",
   "author": "kori-tmathey",
@@ -12,14 +12,21 @@
     "start": "electron .",
     "test": "node test.js",
     "icon": "node make-icon.js",
-    "dist": "node make-icon.js && electron-builder --win nsis"
+    "dist": "node make-icon.js && electron-builder --win nsis",
+    "mobile": "node make-icon.js && node scripts/build-mobile.js && npx cap sync android && node scripts/android-assets.js"
   },
   "dependencies": {
+    "@capacitor/android": "^6.2.3",
+    "@capacitor/app": "^6.0.3",
+    "@capacitor/core": "^6.2.3",
+    "@capacitor/filesystem": "^6.0.4",
+    "@capacitor/local-notifications": "^6.1.3",
     "@fontsource-variable/bricolage-grotesque": "^5.1.0",
     "@fontsource/atkinson-hyperlegible": "^5.1.0",
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.2.3",
     "electron": "33.2.1",
     "electron-builder": "25.1.8"
   },
@@ -32,7 +39,9 @@
       "preload.js",
       "logic.js",
       "renderer/**",
-      "build/icon.png"
+      "!renderer/mobile-api.js",
+      "build/icon.png",
+      "!**/node_modules/@capacitor/**"
     ],
     "win": {
       "target": "nsis"

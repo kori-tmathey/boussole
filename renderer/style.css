@@ -473,6 +473,51 @@ form[data-kind="yearly"] .only-yearly { display: grid; }
 code { font-family: Consolas, 'Cascadia Mono', monospace; font-size: .92em; padding: .2em .5em; border-radius: 8px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); user-select: all; }
 .guide { font-size: .92rem; line-height: 1.5; background: var(--surface); }
 
+/* ---------- Téléphone (Android) ---------- */
+
+.android-only { display: none; }
+html.mobile .android-only { display: block; }
+html.mobile .pc-only, html.mobile .drag { display: none; }
+html.mobile body { display: block; height: auto; min-height: 100vh; overflow: auto; }
+html.mobile #view { overflow: visible; padding: calc(14px + env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom)); }
+html.mobile #nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; flex-direction: row; gap: 0; overflow: visible;
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); border-top: 1.5px solid var(--line);
+}
+html.mobile #nav > .nav-item { flex: 1; flex-direction: column; gap: 3px; padding: 8px 2px; font-size: .72rem; text-align: center; border-radius: 12px; }
+html.mobile #nav > .nav-item .badge { position: absolute; margin: -4px 0 0 22px; min-width: 18px; font-size: .7rem; }
+html.mobile #nav > .nav-item { position: relative; }
+html.mobile .nav-item.on { box-shadow: inset 0 -3px 0 var(--c); }
+html.mobile .nav-more {
+  position: absolute; right: 8px; bottom: calc(100% + 8px); min-width: 230px; padding: 8px; display: grid; gap: 2px;
+  border-radius: 18px; background: var(--surface); box-shadow: 0 10px 30px rgba(0, 0, 0, .25), inset 0 0 0 1.5px var(--line);
+}
+html.mobile .mobile-top { margin-bottom: 10px; }
+html.mobile .mobile-top .sphere-switch { margin: 0; }
+html.mobile .mobile-top .sphere-hint { padding: 4px 4px 0; }
+html.mobile .page-head { margin-bottom: 22px; }
+html.mobile .page-head h1 { font-size: 2rem; }
+html.mobile .now { padding: 24px 20px; border-radius: 22px; }
+html.mobile .now-title { font-size: 1.8rem; }
+html.mobile .task-form, html.mobile .dump { grid-template-columns: 1fr; }
+html.mobile .today, html.mobile .rem-layout { grid-template-columns: 1fr; gap: 28px; }
+html.mobile .focus { grid-template-columns: 1fr; gap: 24px; justify-items: center; }
+html.mobile .disc-wrap { width: 280px; height: 280px; }
+html.mobile .set-row { flex-wrap: wrap; gap: 10px; }
+html.mobile .set-row select, html.mobile .set-row input:not([type=checkbox]):not([type=range]):not([type=color]) { width: 100%; }
+html.mobile .sphere-cards { grid-template-columns: 1fr; }
+html.mobile .ag-toolbar .row { flex-wrap: wrap; }
+html.mobile .ag-grid { overflow-x: auto; }
+html.mobile .ag-grid > div { min-width: calc(58px + var(--cols) * 92px); }
+html.mobile .ag-month { overflow-x: auto; grid-template-columns: repeat(7, minmax(46px, 1fr)); }
+html.mobile .ag-cell { min-height: 84px; padding: 4px; }
+html.mobile .ag-cell .ag-item .ag-time { display: none; }
+html.mobile .choices { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+html.mobile .choices span { padding: 10px 2px; font-size: .74rem; }
+html.mobile .list li { flex-wrap: wrap; }
+html.mobile .kind-tag { width: 100%; }
+html.mobile #toast { bottom: calc(86px + env(safe-area-inset-bottom)); max-width: calc(100% - 32px); }
+
 /* ---------- Vide-tête rapide : sphère ---------- */
 
 .capture-row { display: flex; align-items: center; gap: 10px; }

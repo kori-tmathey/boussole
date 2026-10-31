@@ -28,6 +28,12 @@ L'appli se met ensuite à jour toute seule.
 L'installateur n'est pas signé (une signature de code est payante) : Windows peut afficher
 « Windows a protégé votre ordinateur ». Clique sur **Informations complémentaires**, puis **Exécuter quand même**.
 
+### Sur Android
+
+Installe [Obtainium](https://github.com/ImranR98/Obtainium) (gratuit, open source), touche **Ajouter une appli**
+et colle `https://github.com/kori-tmathey/boussole`. Obtainium installe l'APK et propose chaque nouvelle version.
+Les rappels sont programmés par le téléphone lui-même : ils sonnent même ordinateur éteint.
+
 ## Développer
 
 ```bash
@@ -35,6 +41,7 @@ npm install
 npm start      # lancer l'appli
 npm test       # tests de la logique (rappels, récurrences, agenda, messages…)
 npm run dist   # fabriquer l'installateur Windows
+npm run mobile # préparer l'appli Android (Capacitor), puis : cd android && gradlew assembleRelease
 ```
 
 Le fonctionnement est décrit dans [docs/spec.md](docs/spec.md).

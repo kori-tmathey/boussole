@@ -335,6 +335,82 @@
     return out;
   }
 
+  // ---------- Notifications programmées à l'avance (Android) ----------
+
+  // Identifiant numérique stable (Android exige un entier 32 bits).
+  const hashId = str => { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h) % 2147483647; };
+
+  // Les prochaines notifications des `days` jours, avec les mêmes règles que le planificateur du PC :
+  // heures calmes, sphères (reporté / silencieux), urgent, relances, une fois par jour pour le soir et la météo.
+  function planNotifications(data, now, days = 7, max = 60) {
+    const s = data.settings, end = addDays(now, days), out = [];
+    const quiet = d => !!s.quietStart && inWindow(d, s.quietStart, s.quietEnd);
+    // Premier instant ≥ t (par pas de 5 min) où l'on a le droit de notifier.
+    const allowed = (t, sphere, urgent) => {
+      let x = new Date(Math.max(t, now));
+      for (let i = 0; i < 7 * 288 && x < end; i++) {
+        if ((urgent || !quiet(x)) && (!sphere || notifyMode(s, sphere, x, urgent) !== 'defer')) return x;
+        x = new Date(Math.floor(x.getTime() / (5 * MIN)) * 5 * MIN + 5 * MIN);
+      }
+      return null;
+    };
+    const add = (at, kind, ref, title, body, sphere, urgent = false, occ = null) => {
+      if (!at || at < now || at >= end) return;
+      const mode = urgent ? 'urgent' : sphere ? notifyMode(s, sphere, at, false) : 'normal';
+      out.push({ id: hashId(`${kind}:${ref}:${at.toISOString()}`), at, kind, ref, title, body: body || '', sphere: sphere || null, mode, occ });
+    };
+
+    if (s.modules.rappels) {
+      for (const r of data.reminders) {
+        if (r.done || !r.due) continue;
+        const sphere = sphereOf(r), start = new Date(Math.max(new Date(r.due), r.snoozedUntil ? new Date(r.snoozedUntil) : 0));
+        const fired = r.lastFired && new Date(r.lastFired) >= start;
+        const nag = r.nag ?? s.nagEvery;
+        let t = allowed(fired ? new Date(new Date(r.lastFired).getTime() + nag * MIN) : start, sphere, r.urgent);
+        if (fired && !(nag > 0)) t = null;
+        for (let k = 0; t && k < 6; k++) {
+          add(t, k || fired ? 'nag' : 'reminder', r.id, msg(s.tone, k || fired ? 'nag' : 'reminder', { t: r.title }), r.note, sphere, r.urgent);
+          t = nag > 0 ? allowed(new Date(t.getTime() + nag * MIN), sphere, r.urgent) : null;
+        }
+      }
+    }
+    for (const t of data.tasks) {
+      if (t.done || t.notified || !t.date || !t.time) continue;
+      const start = taskStart(t), at = allowed(start, sphereOf(t), false);
+      if (at && at - start <= 6 * 60 * MIN) add(at, 'task', t.id, `C'est l'heure : ${t.title}`, t.firstStep ? `Première petite étape : ${t.firstStep}` : '', sphereOf(t));
+    }
+    if (s.modules.agenda) {
+      for (const e of data.events || []) {
+        if (!e.date) continue;
+        const single = !e.repeat || e.repeat === 'none';
+        for (const occ of eventOccurrences(e, now, end)) {
+          if (single ? e.notified : e.notified === occ.toISOString()) continue;
+          const at = e.allDay ? at_(occ, s.wake) : new Date(occ - (s.eventLead || 0) * MIN);
+          add(at, 'event', e.id, e.allDay ? `Aujourd'hui : ${e.title}` : `Dans ${s.eventLead || 0} min : ${e.title}`,
+            e.allDay ? e.place : `${e.start}${e.end ? ' – ' + e.end : ''}${e.place ? ', ' + e.place : ''}`, sphereOf(e), false, occ.toISOString());
+        }
+      }
+    }
+    // Une fois par jour : décrocher, coucher, check-ins météo (jamais pendant les heures calmes).
+    const daily = (key, time, title, body) => {
+      for (let i = 0; i <= days; i++) {
+        const at = at_(addDays(now, i), time);
+        if (data.fired[key] === dayKey(at) || quiet(at)) continue;
+        add(at, 'daily', key, title, body, null);
+      }
+    };
+    if (s.modules.soir) {
+      daily('winddown', toHM(hm(s.bedtime) - s.windDown), msg(s.tone, 'winddown', { m: s.windDown }), 'Ouvre « Ce soir » pour fermer la journée en douceur.');
+      daily('bedtime', s.bedtime, 'C\'est l\'heure de dormir.', 'Le reste peut attendre demain. Ouvre « Ce soir » pour voir tes victoires.');
+    }
+    if (s.modules.meteo) {
+      for (const t of String(s.checkins).split(',').map(x => x.trim()).filter(x => /^\d{1,2}:\d{2}$/.test(x)))
+        daily('checkin-' + t, t, msg(s.tone, 'checkin'), 'Un clic suffit.');
+    }
+    return out.sort((a, b) => a.at - b.at).slice(0, max);
+  }
+  const at_ = (day, time) => at(day, time);
+
   // Créneau déjà pris par une tâche avec heure ou un événement, quelle que soit la sphère.
   function findConflict(data, start, end, ignore = {}) {
     const items = agendaItems(data, addDays(start, -1), addDays(end, 1), start);
@@ -395,6 +471,24 @@
     return { type, title, date: date ? dayKey(date) : '', time: time || '' };
   }
 
+  // Un message ntfy d'un proche → l'élément à ajouter (id stable `k<id>` : PC et téléphone ne le dupliquent pas),
+  // le texte de la notification et celui de l'accusé de réception.
+  function messageToItem(m, now, name) {
+    const p = parseMessage(m.message || m.title, now), id = 'k' + m.id;
+    const notes = [{ at: now.toISOString(), text: `Envoyé par ${name}${m.title && m.message ? ' : ' + m.title : ''}` }];
+    const base = { id, title: p.title, sphere: 'perso', notes, from: 'kelly' };
+    const item = p.type === 'reminder'
+      ? { ...base, cat: 'autre', kind: 'once', date: p.date, time: p.time, nag: null, note: '', urgent: false, done: false }
+      : { ...base, firstStep: '', done: false, date: p.date, time: p.time, at: now.toISOString() };
+    if (p.type === 'reminder') item.due = firstDue(item, now).toISOString();
+    const when = p.date ? ` le ${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}${p.time ? ' à ' + p.time : ''}` : '';
+    return {
+      coll: p.type === 'reminder' ? 'reminders' : 'tasks', item, type: p.type,
+      title: `${name} t'envoie : ${p.title}`, body: `${p.type === 'reminder' ? 'Rappel' : 'Tâche'}${when}.`,
+      ack: `${p.title} (${p.type === 'reminder' ? 'rappel' : 'tâche'}${when})`,
+    };
+  }
+
   function normalize(d) {
     d = d && typeof d === 'object' ? d : {};
     const given = d.settings || {};
@@ -432,7 +526,7 @@
     shouldFire, complete, snooze, untilTomorrow, isNight, bedtimeFor, duration, addWin, winsOn, msg, normalize,
     mergeIncoming, sphereOf, isWork, autoSphere, notifyMode, taskStart, eventStart, eventEnd,
     taskShouldNotify, eventShouldNotify, agendaItems, layoutDay,
-    repeatMatches, eventOccurrences, completeTask, findConflict, search, parseMessage,
+    repeatMatches, eventOccurrences, completeTask, findConflict, search, parseMessage, planNotifications, messageToItem,
   };
   if (typeof module !== 'undefined') module.exports = L; else window.L = L;
 })();

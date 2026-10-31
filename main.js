@@ -164,24 +164,14 @@ async function pushPhone(title, body, sphere, mode) {
 
 // Un message d'un proche devient une tâche ou un rappel (L.parseMessage), puis on lui répond « reçu ».
 function receiveMessage(m) {
-  const now = new Date(), k = data.settings.kelly, name = k.name || 'Ton proche';
-  const p = L.parseMessage(m.message || m.title, now), id = 'k' + m.id;
-  const notes = [{ at: now.toISOString(), text: `Envoyé par ${name}${m.title && m.message ? ' : ' + m.title : ''}` }];
-  if (p.type === 'reminder') {
-    const r = { id, title: p.title, cat: 'autre', kind: 'once', date: p.date, time: p.time, sphere: 'perso', nag: null, note: '', urgent: false, done: false, notes, from: 'kelly' };
-    r.due = L.firstDue(r, now).toISOString();
-    mainOp(d => { if (!d.reminders.some(x => x.id === id)) d.reminders.push({ ...r, notes: [...notes] }); });
-  } else {
-    const t = { id, title: p.title, firstStep: '', done: false, sphere: 'perso', date: p.date, time: p.time, notes, at: now.toISOString(), from: 'kelly' };
-    mainOp(d => { if (!d.tasks.some(x => x.id === id)) d.tasks.push({ ...t, notes: [...notes] }); });
-  }
-  const when = p.date ? ` le ${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}${p.time ? ' à ' + p.time : ''}` : '';
-  const start = p.time ? L.at(new Date(p.date + 'T00:00:00'), p.time) : null;
-  const clash = start && L.findConflict(data, start, new Date(start.getTime() + 30 * L.MIN), { kind: p.type, id });
-  notify(`${name} t'envoie : ${p.title}`,
-    `${p.type === 'reminder' ? 'Rappel' : 'Tâche'}${when}.${clash ? ` Attention : tu as déjà « ${clash.title} » à ce moment-là.` : ''}`,
-    () => show(p.type === 'reminder' ? 'rappels' : 'aujourdhui'), 'perso', 'normal');
-  ntfyPost({ topic: k.topic, title: '✓ Reçu par Boussole', message: `${p.title} (${p.type === 'reminder' ? 'rappel' : 'tâche'}${when})`, tags: ['boussole', 'white_check_mark'] }).catch(() => {});
+  const now = new Date(), k = data.settings.kelly;
+  const r = L.messageToItem(m, now, k.name || 'Ton proche'), { item } = r;
+  mainOp(d => { if (!d[r.coll].some(x => x.id === item.id)) d[r.coll].push(JSON.parse(JSON.stringify(item))); });
+  const start = item.time ? L.at(new Date(item.date + 'T00:00:00'), item.time) : null;
+  const clash = start && L.findConflict(data, start, new Date(start.getTime() + 30 * L.MIN), { kind: r.type, id: item.id });
+  notify(r.title, `${r.body}${clash ? ` Attention : tu as déjà « ${clash.title} » à ce moment-là.` : ''}`,
+    () => show(r.type === 'reminder' ? 'rappels' : 'aujourdhui'), 'perso', 'normal');
+  ntfyPost({ topic: k.topic, title: '✓ Reçu par Boussole', message: r.ack, tags: ['boussole', 'white_check_mark'] }).catch(() => {});
 }
 
 async function pollMessages() {
