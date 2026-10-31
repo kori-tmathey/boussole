@@ -6,7 +6,8 @@ const { autoUpdater } = require('electron-updater');
 
 app.setAppUserModelId('fr.theo.boussole');
 if (process.env.BOUSSOLE_DATA) app.setPath('userData', process.env.BOUSSOLE_DATA); // essais sans toucher aux vraies données
-if (!app.requestSingleInstanceLock()) app.quit();
+const primary = app.requestSingleInstanceLock();
+if (!primary) app.quit();
 
 const ICON = path.join(__dirname, 'build', 'icon.png');
 const FILE = () => path.join(app.getPath('userData'), 'boussole.json');
@@ -22,13 +23,26 @@ let update = { state: 'idle' }; // idle | checking | downloading | ready | none 
 
 // ---------- Stockage : écriture atomique, copie de secours, sauvegardes datées ----------
 
+// Journal de diagnostic : ce que l'appli lit au démarrage et quand les liens téléphone / proche changent.
+function journal(msg) {
+  try {
+    const f = path.join(app.getPath('userData'), 'journal.log');
+    if (fs.existsSync(f) && fs.statSync(f).size > 200e3) fs.renameSync(f, f.replace('.log', '.ancien.log'));
+    fs.appendFileSync(f, `${new Date().toISOString()} [${app.getVersion()} pid ${process.pid}] ${msg}\n`);
+  } catch { /* le journal ne doit jamais gêner */ }
+}
+const links = d => `rev ${d.rev} téléphone=${d.settings.phone.enabled}/${d.settings.phone.topic ? 'sujet' : '-'} proche=${d.settings.kelly.enabled}/${d.settings.kelly.topic ? 'sujet' : '-'}`;
+
 function load() {
   const f = FILE();
   for (const file of [f, f + '.bak']) {
-    if (!fs.existsSync(file)) continue;
-    try { return L.normalize(JSON.parse(fs.readFileSync(file, 'utf8'))); }
-    catch { fs.copyFileSync(file, `${file}.illisible-${Date.now()}`); } // on ne l'écrase jamais
+    const exists = fs.existsSync(file);
+    journal(`lecture ${path.basename(file)} : ${exists ? 'présent' : 'absent'}`);
+    if (!exists) continue;
+    try { const d = L.normalize(JSON.parse(fs.readFileSync(file, 'utf8'))); journal(`chargé ${path.basename(file)} : ${links(d)}`); return d; }
+    catch (e) { journal(`illisible ${path.basename(file)} : ${e.message}`); fs.copyFileSync(file, `${file}.illisible-${Date.now()}`); } // on ne l'écrase jamais
   }
+  journal('aucun fichier lisible : réglages par défaut');
   return L.normalize({});
 }
 
@@ -308,8 +322,9 @@ function buildTray() {
 ipcMain.handle('get', () => data);
 
 ipcMain.handle('set', (e, incoming) => {
-  const prev = data.settings;
+  const prev = data.settings, before = links(data);
   const { next, replayed } = L.mergeIncoming(data, incoming, ops);
+  if (links({ ...next, rev: data.rev }) !== before) journal(`liens modifiés par l'interface : ${before} → ${links(next)}`);
   data = next;
   // Si on a rejoué des opérations, l'interface doit recevoir la version fusionnée.
   commit(replayed ? null : e.sender);
@@ -412,11 +427,14 @@ ipcMain.on('titlebar', (_, color, symbolColor) => {
 // ---------- Démarrage ----------
 
 app.on('second-instance', () => show());
-app.on('before-quit', () => { quitting = true; if (cloud.timer) backupCloud(); });
+app.on('before-quit', () => { quitting = true; journal('fermeture'); if (cloud.timer) backupCloud(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => { /* reste dans la barre des tâches */ });
 
 app.whenReady().then(() => {
+  journal(`démarrage ${primary ? 'principal' : 'SECONDAIRE (une autre copie tourne déjà)'} argv=${JSON.stringify(process.argv.slice(1))}`);
+  // app.quit() n'arrête pas tout de suite : une deuxième copie ne doit ni lire ni écrire les données.
+  if (!primary) return;
   data = load();
   createWindow(process.argv.includes('--hidden') || data.settings.startHidden);
   buildTray();
