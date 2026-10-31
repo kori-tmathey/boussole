@@ -1,0 +1,55 @@
+{
+  "name": "boussole",
+  "productName": "Boussole",
+  "version": "1.1.0",
+  "description": "Une boussole pour le TDAH : rappels, agenda perso/pro, focus, vide-tête, soir et météo intérieure",
+  "main": "main.js",
+  "author": "kori-tmathey",
+  "license": "MIT",
+  "repository": "github:kori-tmathey/boussole",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node test.js",
+    "icon": "node make-icon.js",
+    "dist": "node make-icon.js && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.1.0",
+    "@fontsource/atkinson-hyperlegible": "^5.1.0",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "fr.theo.boussole",
+    "productName": "Boussole",
+    "icon": "build/icon.png",
+    "files": [
+      "main.js",
+      "preload.js",
+      "logic.js",
+      "renderer/**",
+      "build/icon.png"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "kori-tmathey",
+        "repo": "boussole",
+        "releaseType": "release"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Boussole"
+    }
+  }
+}

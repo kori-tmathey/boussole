@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:">
+  <title>Boussole</title>
+  <link rel="stylesheet" href="../node_modules/@fontsource/atkinson-hyperlegible/400.css">
+  <link rel="stylesheet" href="../node_modules/@fontsource/atkinson-hyperlegible/700.css">
+  <link rel="stylesheet" href="../node_modules/@fontsource-variable/bricolage-grotesque/index.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="drag"></div>
+  <nav id="nav" aria-label="Sections"></nav>
+  <main id="view"></main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="sheet"></div>
+  <canvas id="confetti"></canvas>
+  <script src="../logic.js"></script>
+  <script src="agenda.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('api', {
+  get: () => ipcRenderer.invoke('get'),
+  set: data => ipcRenderer.invoke('set', data),
+  reminder: (id, action) => ipcRenderer.invoke('reminder', id, action),
+  capture: (text, sphere) => ipcRenderer.invoke('capture', text, sphere),
+  captureSphere: () => ipcRenderer.invoke('capture-sphere'),
+  linkInfo: () => ipcRenderer.invoke('link-info'),
+  phoneTest: () => ipcRenderer.invoke('phone-test'),
+  kellyCheck: () => ipcRenderer.invoke('kelly-check'),
+  updateInfo: () => ipcRenderer.invoke('update-info'),
+  updateCheck: () => ipcRenderer.invoke('update-check'),
+  updateInstall: () => ipcRenderer.send('update-install'),
+  notify: (title, body, view, sphere) => ipcRenderer.send('notify', title, body, view, sphere),
+  open: view => ipcRenderer.send('open', view),
+  closeMini: () => ipcRenderer.send('close-mini'),
+  hideMain: () => ipcRenderer.send('hide-main'),
+  dataFolder: () => ipcRenderer.send('data-folder'),
+  backupInfo: () => ipcRenderer.invoke('backup-info'),
+  pickBackupDir: () => ipcRenderer.invoke('pick-backup-dir'),
+  exportData: () => ipcRenderer.invoke('export'),
+  importData: () => ipcRenderer.invoke('import'),
+  titlebar: (color, symbol) => ipcRenderer.send('titlebar', color, symbol),
+  on: (channel, fn) => ipcRenderer.on(channel, (_, ...args) => fn(...args)),
+});
