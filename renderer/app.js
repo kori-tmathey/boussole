@@ -18,7 +18,7 @@ const S = () => D.settings;
 const uid = () => Math.random().toString(36).slice(2, 10);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
-const fmtDay = d => d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+const fmtDay = d => L.frDate(d, { weekday: 'short', day: 'numeric', month: 'short' });
 const rel = d => (L.dayKey(d) === L.dayKey(new Date()) ? "aujourd'hui" : fmtDay(d)) + ', ' + L.clock(d);
 const WD = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 
@@ -97,7 +97,8 @@ async function save(rerender = true) {
 }
 
 const isTyping = () => !!document.activeElement?.matches('input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]), textarea, select');
-const isBusy = () => isTyping() || (B.on && view === 'soir');
+let pointerHeld = false; // clic en cours : on ne retire pas le bouton sous le doigt
+const isBusy = () => isTyping() || pointerHeld || (B.on && view === 'soir');
 
 function applyTheme() {
   const s = S(), night = L.isNight(s, new Date());
@@ -118,7 +119,36 @@ function applyTheme() {
   }
 }
 
-function render() {
+// Ce qui est en cours de saisie (écran et fiche), remis après un redessin venu de l'arrière-plan
+// (relance, synchro, message) : sans ça, le texte tapé disparaissait.
+function formSnapshot() {
+  const a = document.activeElement;
+  return {
+    fields: [...document.querySelectorAll('form[data-form] [name]')]
+      .filter(el => el.type !== 'hidden' && el.type !== 'submit')
+      .map(el => ({ f: el.form.dataset.form, n: el.name, t: el.type, v: el.value, c: el.checked })),
+    focus: a && a.form && a.name ? { f: a.form.dataset.form, n: a.name, s: a.selectionStart, e: a.selectionEnd } : null,
+  };
+}
+function formRestore(snap) {
+  const find = (f, n) => [...document.querySelectorAll(`form[data-form="${f}"] [name="${n}"]`)];
+  for (const k of snap.fields) {
+    for (const el of find(k.f, k.n)) {
+      if (k.t === 'checkbox') el.checked = k.c;
+      else if (k.t === 'radio') { if (k.c && el.value === k.v) el.checked = true; }
+      else el.value = k.v;
+    }
+  }
+  document.querySelectorAll('[data-kind-select]').forEach(s => { s.form.dataset.kind = s.value; });
+  document.querySelectorAll('[data-allday-toggle]').forEach(c => { c.form.dataset.allday = c.checked; });
+  if (snap.focus) {
+    const el = find(snap.focus.f, snap.focus.n)[0];
+    if (el) { el.focus(); try { el.setSelectionRange(snap.focus.s, snap.focus.e); } catch { /* champ sans curseur */ } }
+  }
+}
+
+function render(keepForms = false) {
+  const snap = keepForms ? formSnapshot() : null;
   applyTheme();
   lastSphere = currentSphere();
   if (!enabled(view)) view = 'aujourdhui';
@@ -127,6 +157,7 @@ function render() {
   v.dataset.sec = view;
   v.innerHTML = `<div class="wrap ${view === 'agenda' ? 'wide' : ''}">${MOBILE ? `<div class="mobile-top">${sphereSwitch()}</div>` : ''}${PAGES[view]()}</div>`;
   renderSheet();
+  if (snap) formRestore(snap);
   updateFocusUI();
   if (view === 'reglages') { fillBackupStatus(); fillLinkStatus(); fillUpdateStatus(); fillSyncStatus(); }
   if (view === 'agenda') afterAgendaRender();
@@ -227,7 +258,7 @@ function pageToday() {
   const tasks = mine.filter(x => !x.date || x.date <= today);
   const later = mine.length - tasks.length;
   const cur = tasks[0];
-  const date = cap(t.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }));
+  const date = cap(L.frDate(t, { weekday: 'long', day: 'numeric', month: 'long' }));
   const when = x => (x.date ? `<small>${x.date === today ? "Aujourd'hui" : cap(fmtDay(new Date(x.date + 'T12:00')))}${x.time ? ', ' + x.time : ''}</small>` : '');
 
   const now = cur ? `
@@ -304,8 +335,8 @@ function whenLabel(r) {
     case 'daily': return 'Chaque jour à ' + r.time;
     case 'weekdays': return 'En semaine à ' + r.time;
     case 'weekly': return 'Chaque ' + WD[r.weekday] + ' à ' + r.time;
-    case 'monthly': return `Le ${r.monthDay} de chaque mois à ${r.time}`;
-    case 'yearly': return `Chaque année le ${new Date(r.date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} à ${r.time}`;
+    case 'monthly': return `Le ${Number(r.monthDay) === 1 ? '1er' : r.monthDay} de chaque mois à ${r.time}`;
+    case 'yearly': return `Chaque année le ${L.frDate(new Date(r.date + 'T12:00'), { day: 'numeric', month: 'long' })} à ${r.time}`;
     default: return '';
   }
 }
@@ -602,7 +633,7 @@ function doctorSummary() {
   const notes = ms.filter(m => m.note).slice(-10).map(m => `- ${fmtDay(new Date(m.at))} ${L.clock(new Date(m.at))} (${WX[m.mood - 1][2]}) : ${m.note}`);
   return [
     `Météo intérieure, du ${from.toLocaleDateString('fr-FR')} au ${t.toLocaleDateString('fr-FR')}`,
-    `Check-ins : ${ms.length}`,
+    `Points météo notés : ${ms.length}`,
     `Humeur moyenne : ${avg('mood')} (1 = orage, 5 = soleil)`,
     `Énergie moyenne : ${avg('energy')}`,
     `Tension moyenne : ${avg('tension')} (5 = sous pression)`,
@@ -634,7 +665,7 @@ function pageMeteo() {
       <div class="row"><button class="btn soft" data-act="copyDoctor">Copier le résumé</button></div>
       <pre class="doctor" id="doctor" hidden></pre>
     </section>
-    ${history.length ? `<section><h2 class="sec-title">Derniers check-ins</h2><ul class="list">${history.map(m => `
+    ${history.length ? `<section><h2 class="sec-title">Derniers points météo</h2><ul class="list">${history.map(m => `
       <li><span class="cat" style="background:color-mix(in oklab, var(--empathy) 14%, var(--surface))">${WX[m.mood - 1][1]}</span>
         <div><b>${WX[m.mood - 1][2]}</b>${m.energy ? `, énergie ${ENERGY[m.energy - 1].toLowerCase()}` : ''}${m.tension ? `, ${TENSION[m.tension - 1].toLowerCase()}` : ''}
           <small>${cap(rel(new Date(m.at)))}${m.note ? ` : ${esc(m.note)}` : ''}</small></div>
@@ -749,8 +780,8 @@ function pageSettings() {
   const s = S();
   const legend = [
     ['primary', 'Sarcelle', 'calme et concentration. Couleur de base et du focus.'],
-    ['pro', 'Bleu cobalt', `${esc(s.spheres.pro.name)} : cadre, fiabilité, concentration.`],
-    ['perso', 'Rose orchidée', `${esc(s.spheres.perso.name)} : chaleur, affection, ce qui compte pour toi.`],
+    ['pro', 'Bleu cobalt', `sphère ${esc(s.spheres.pro.name)}. Cadre, fiabilité, concentration.`],
+    ['perso', 'Rose orchidée', `sphère ${esc(s.spheres.perso.name)}. Chaleur, affection, ce qui compte pour toi.`],
     ['attention', 'Ambre', 'attire l\'attention sans alarmer. Pour les rappels, à la place du rouge qui stresse.'],
     ['progress', 'Sauge', 'progrès et sécurité. Ce qui est fait.'],
     ['create', 'Lavande', 'créativité et imagination. Le vide-tête, les idées et les notes.'],
@@ -813,7 +844,7 @@ function pageSettings() {
       ${row('Heure de lever', inp('wake', 'time'))}
       ${row('Heure du coucher visée', inp('bedtime', 'time'), 'Sert au rail du temps et à l\'alerte du soir.')}
       ${row('Commencer à décrocher', sel('windDown', [15, 30, 45, 60, 90].map(m => [m, m + ' min avant']), true))}
-      ${row('Check-ins météo', inp('checkins', 'text', 'placeholder="13:00, 20:00"'), 'Heures séparées par des virgules. Vide pour aucun.')}
+      ${row('Points météo', inp('checkins', 'text', 'placeholder="13:00, 20:00"'), 'Heures séparées par des virgules. Vide pour aucun.')}
       ${row('Respiration', sel('breathSeconds', [4, 5, 6].map(x => [x, `${x} s / ${x} s`]), true))}
     </section>
 
@@ -823,7 +854,7 @@ function pageSettings() {
       ${row('Focus', chk('modules.focus'))}
       ${row('Vide-tête', chk('modules.tete'))}
       ${row('Ce soir', chk('modules.soir'), 'Avec les notifications de décrochage et de coucher.')}
-      ${row('Météo intérieure', chk('modules.meteo'), 'Avec les notifications de check-in.')}
+      ${row('Météo intérieure', chk('modules.meteo'), 'Avec les notifications du point météo.')}
     </section>
 
     <section class="pc-only"><h2 class="sec-title">Windows</h2>
@@ -1237,11 +1268,16 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && sheet) { ACT.closeSheet(); return; }
   if (e.key === 'Enter' && !e.shiftKey && e.target.matches('textarea[data-enter]')) { e.preventDefault(); e.target.form.requestSubmit(); }
 });
-document.addEventListener('focusout', () => setTimeout(() => {
-  if (pendingRender && !isBusy()) { pendingRender = false; render(); }
-}, 0));
+// Redessin différé jusqu'à la fin de la saisie et du clic en cours (ex. « Créer le rappel »).
+const flushRender = () => setTimeout(() => {
+  if (pendingRender && !isBusy()) { pendingRender = false; render(true); }
+}, 0);
+document.addEventListener('focusout', flushRender);
+document.addEventListener('pointerdown', () => { pointerHeld = true; }, true);
+document.addEventListener('pointerup', () => { pointerHeld = false; flushRender(); }, true);
+document.addEventListener('pointercancel', () => { pointerHeld = false; flushRender(); }, true);
 
-api.on('data', d => { D = d; if (isBusy()) pendingRender = true; else render(); });
+api.on('data', d => { D = d; if (isBusy()) pendingRender = true; else render(true); });
 api.on('goto', v => { view = v; render(); });
 api.on('sound', sphere => playSound(S().spheres[sphere]?.sound));
 // Bouton retour d'Android : fermer la fiche, le menu « Plus », revenir à Aujourd'hui, puis réduire l'appli.
@@ -1255,7 +1291,7 @@ api.on('back', () => {
 // Rafraîchit l'horloge, le rail, l'agenda, la sphère automatique et le thème du soir.
 setInterval(() => {
   if (isBusy()) return;
-  if (view === 'aujourdhui' || view === 'agenda' || currentSphere() !== lastSphere) render(); else applyTheme();
+  if (view === 'aujourdhui' || view === 'agenda' || currentSphere() !== lastSphere) render(true); else applyTheme();
 }, 30000);
 
 (async () => { D = await api.get(); render(); })();

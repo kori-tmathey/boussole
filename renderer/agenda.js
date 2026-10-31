@@ -12,7 +12,7 @@ const HOUR_PX = 52;
 
 const startOfDay = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
 const startOfWeek = d => { const x = startOfDay(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
-const dayLong = d => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+const dayLong = d => L.frDate(d, { day: 'numeric', month: 'long' });
 
 function agendaRange() {
   const v = S().agendaView, a = startOfDay(agendaAnchor);
@@ -24,7 +24,7 @@ function agendaRange() {
 
 function agendaTitle() {
   const v = S().agendaView, a = agendaAnchor;
-  if (v === 'day') return cap(a.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
+  if (v === 'day') return cap(L.frDate(a, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
   if (v === 'week') { const [s, e] = agendaRange(); return `Du ${dayLong(s)} au ${dayLong(L.addDays(e, -1))}`; }
   return cap(a.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }));
 }

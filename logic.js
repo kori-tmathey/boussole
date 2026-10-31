@@ -201,7 +201,7 @@
       nag: ['Toujours là : {t}. Une minute suffit peut-être.', 'Je repasse, tranquillement : {t}', 'Pas de reproche, juste un rappel : {t}'],
       chime: ['Il est {h}. Où en es-tu ?', 'Point temps : il est {h}.', '{h}. Le temps passe, toi tu respires.'],
       winddown: ['Le coucher est dans {m} min. On commence à ralentir ?', 'Dans {m} min, au lit. Tu peux déjà poser ce qui tourne dans ta tête.'],
-      bedtime: ['C\'est l\'heure. Aujourd\'hui : {n} victoire(s). Ta journée a compté.', 'Il est l\'heure de dormir. Le reste peut attendre demain.'],
+      bedtime: ['C\'est l\'heure. Aujourd\'hui : {v}. Ta journée a compté.', 'Il est l\'heure de dormir. Le reste peut attendre demain.'],
       checkin: ['Quelle météo à l\'intérieur ?', 'Comment ça va, vraiment ? Un clic suffit.'],
       focusEnd: ['Bloc terminé. Bravo d\'avoir commencé.', 'Fini ! Le plus dur, c\'était de lancer.'],
       done: ['Fait. Un poids en moins.', 'Bien joué.', 'C\'est rangé.'],
@@ -211,8 +211,8 @@
       nag: ['Encore en attente : {t}', 'Relance : {t}'],
       chime: ['Il est {h}.', '{h}.'],
       winddown: ['Coucher dans {m} min.'],
-      bedtime: ['Heure du coucher. {n} victoire(s) aujourd\'hui.'],
-      checkin: ['Check-in météo.'],
+      bedtime: ['Heure du coucher. {v} aujourd\'hui.'],
+      checkin: ['Point météo.'],
       focusEnd: ['Bloc terminé.'],
       done: ['Fait.', 'Validé.'],
     },
@@ -221,18 +221,22 @@
       nag: ['Je suis têtu, comme toi : {t}', 'Toc toc. C\'est encore moi : {t}', 'Version polie de « tu as oublié » : {t}'],
       chime: ['Il est {h}. Oui, déjà.', '{h}. Le temps file, je te le dis en ami.', 'Flash info : il est {h}.'],
       winddown: ['Dans {m} min, le lit t\'attend. Il est patient, mais quand même.'],
-      bedtime: ['{n} victoire(s) au compteur. Le jeu se sauvegarde, tu peux dormir.', 'Fin de partie pour aujourd\'hui. Sauvegarde automatique activée.'],
+      bedtime: ['{v} au compteur. Le jeu se sauvegarde, tu peux dormir.', 'Fin de partie pour aujourd\'hui. Sauvegarde automatique activée.'],
       checkin: ['Bulletin météo intérieur ?', 'Soleil, nuages ou tempête là-dedans ?'],
       focusEnd: ['Boss vaincu. +1 victoire.', 'Bloc terminé. Applaudissements du public.'],
-      done: ['Et un de moins !', 'Achievement débloqué.', 'Pouf, disparu.'],
+      done: ['Et un de moins !', 'Succès débloqué.', 'Pouf, disparu.'],
     },
   };
 
   function msg(tone, key, vars = {}) {
     const list = (MSG[tone] || MSG.doux)[key] || MSG.doux[key];
     const s = list[Math.floor(Math.random() * list.length)];
-    return s.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
+    const v = vars.n === undefined ? '' : `${vars.n} victoire${vars.n > 1 ? 's' : ''}`;
+    return s.replace(/\{(\w+)\}/g, (_, k) => (k === 'v' ? v : vars[k] ?? ''));
   }
+
+  // Date en toutes lettres, avec « 1er » comme il se doit en français (1er novembre, sam. 1er nov.).
+  const frDate = (d, opts) => d.toLocaleDateString('fr-FR', opts).replace(/(^|\s)1(?= [a-zéû])/, '$11er');
 
   // ---------- Tâches datées et événements ----------
 
@@ -483,7 +487,7 @@
       ? { ...base, cat: 'autre', kind: 'once', date: p.date, time: p.time, nag: null, note: '', urgent: false, done: false }
       : { ...base, firstStep: '', done: false, date: p.date, time: p.time, at: now.toISOString() };
     if (p.type === 'reminder') item.due = firstDue(item, now).toISOString();
-    const when = p.date ? ` le ${new Date(p.date + 'T12:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}${p.time ? ' à ' + p.time : ''}` : '';
+    const when = p.date ? ` le ${frDate(new Date(p.date + 'T12:00'), { weekday: 'long', day: 'numeric', month: 'long' })}${p.time ? ' à ' + p.time : ''}` : '';
     return {
       coll: p.type === 'reminder' ? 'reminders' : 'tasks', item, type: p.type,
       title: `${name} t'envoie : ${p.title}`, body: `${p.type === 'reminder' ? 'Rappel' : 'Tâche'}${when}.`,
@@ -632,7 +636,7 @@
 
   const L = {
     MIN, DEFAULT_SETTINGS, pad, hm, toHM, dayKey, clock, inWindow, at, addDays, nextOccurrence, firstDue,
-    shouldFire, complete, snooze, untilTomorrow, isNight, bedtimeFor, duration, addWin, winsOn, msg, normalize,
+    shouldFire, complete, snooze, untilTomorrow, isNight, bedtimeFor, duration, addWin, winsOn, msg, frDate, normalize,
     mergeIncoming, sphereOf, isWork, autoSphere, notifyMode, taskStart, eventStart, eventEnd,
     taskShouldNotify, eventShouldNotify, agendaItems, layoutDay,
     repeatMatches, eventOccurrences, completeTask, findConflict, search, parseMessage, planNotifications, messageToItem,

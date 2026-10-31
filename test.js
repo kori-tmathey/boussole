@@ -221,6 +221,13 @@ assert.strictEqual(ad.data.settings.prenom, 'A'); assert.strictEqual(ad.data.set
 assert.strictEqual(L.normalize(null).settings.phone.server, 'https://ntfy.sh');
 assert.strictEqual(L.normalize({ settings: { modules: { soir: false } } }).settings.modules.focus, true);
 
+// Français : « 1er novembre », et « victoire » accordé.
+assert.strictEqual(L.frDate(new Date(2026, 10, 1), { day: 'numeric', month: 'long' }), '1er novembre');
+assert.strictEqual(L.frDate(new Date(2026, 10, 11), { day: 'numeric', month: 'long' }), '11 novembre');
+assert.match(L.frDate(new Date(2026, 10, 1), { weekday: 'short', day: 'numeric', month: 'short' }), /^dim\. 1er nov\.$/);
+assert.strictEqual(L.msg('direct', 'bedtime', { n: 1 }), 'Heure du coucher. 1 victoire aujourd\'hui.');
+assert.strictEqual(L.msg('direct', 'bedtime', { n: 3 }), 'Heure du coucher. 3 victoires aujourd\'hui.');
+
 // Chiffrement : aller-retour, et une mauvaise clé échoue.
 (async () => {
   const key = L.newKey(), box = await L.encrypt(key, { a: 'Été' });
