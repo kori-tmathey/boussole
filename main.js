@@ -127,7 +127,9 @@ function showNudge(id) {
 // ---------- ntfy : téléphone et messages d'un proche (gratuit, open source) ----------
 
 const ntfyServer = () => (data.settings.phone.server || 'https://ntfy.sh').replace(/\/+$/, '');
-const ntfyPost = body => fetch(ntfyServer(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+// ntfy n'affiche qu'une icône accessible en ligne (et seulement sur Android) : celle du dépôt GitHub.
+const NTFY_ICON = 'https://raw.githubusercontent.com/kori-tmathey/boussole/main/docs/icon.png';
+const ntfyPost = body => fetch(ntfyServer(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ icon: NTFY_ICON, ...body }) });
 
 async function pushPhone(title, body, sphere, mode) {
   const p = data.settings.phone, sp = sphere && data.settings.spheres[sphere];

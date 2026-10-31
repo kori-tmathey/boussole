@@ -1,7 +1,7 @@
 {
   "name": "boussole",
   "productName": "Boussole",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Une boussole pour le TDAH : rappels, agenda perso/pro, focus, vide-tête, soir et météo intérieure",
   "main": "main.js",
   "author": "kori-tmathey",
