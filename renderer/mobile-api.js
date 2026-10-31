@@ -1,4 +1,4 @@
-/* global L, Capacitor */
+/* global L, Capacitor, Sync, jsQR */
 // Pont Android : le même window.api que preload.js (Electron), branché sur le stockage et les notifications
 // d'Android. Les notifications sont programmées par le système : elles sonnent appli fermée et PC éteint.
 (function () {
@@ -24,7 +24,11 @@
     return L.normalize({});
   }
 
+  let lastSaved = null; // état au dernier enregistrement : sert à dater ce qui a changé (synchro)
+
   function save() {
+    L.stamp(lastSaved || L.normalize({}), data, new Date());
+    lastSaved = JSON.parse(JSON.stringify(data));
     const text = JSON.stringify(data);
     writing = writing.then(async () => {
       const old = await read(FILE);
@@ -44,10 +48,78 @@
     if (ops.length > 200) ops.shift();
   }
 
-  async function commit(toRenderer = true) {
+  async function commit(toRenderer = true, fromPeer = false) {
     await save();
     reschedule();
     if (toRenderer) emit('data', data);
+    if (!fromPeer) schedulePublish();
+  }
+
+  // ---------- Synchro avec le PC (chiffrée, via ntfy) ----------
+
+  const sync = { timer: null, busy: false, last: null, error: null };
+  const syncCfg = () => { const s = data.settings.sync; return s.topic && s.key ? { ...s, server: s.server || server() } : null; };
+  const DEVICE = ['sync', 'phone', 'shortcut', 'autostart', 'startHidden', 'closeToTray', 'backupDir', 'textScale'];
+
+  function schedulePublish() {
+    if (!syncCfg()) return;
+    clearTimeout(sync.timer);
+    sync.timer = setTimeout(publishState, 3000);
+  }
+  async function publishState() {
+    const cfg = syncCfg();
+    if (!cfg || cfg.adopt) return; // on attend d'abord l'état du PC
+    try { await Sync.publish(cfg, data); sync.last = new Date().toISOString(); sync.error = null; } catch (e) { sync.error = e.message; }
+  }
+  function applyPeer(d, view, adopt) {
+    const m = L.mergeRemote(d, view, adopt).data;
+    for (const k of ['tasks', 'reminders', 'events', 'ideas', 'moods', 'wins', 'nights', 'deleted', 'settingsU']) d[k] = m[k];
+    for (const [k, v] of Object.entries(m.settings)) if (!DEVICE.includes(k)) d.settings[k] = v;
+  }
+  async function pollSync() {
+    const cfg = syncCfg();
+    if (!cfg || sync.busy) return;
+    sync.busy = true;
+    try {
+      const got = await Sync.poll(cfg, cfg.lastId);
+      let changed = got.lastId !== cfg.lastId, behind = got.hellos > 0;
+      if (changed) op(d => { d.settings.sync.lastId = got.lastId; });
+      for (const st of got.states) {
+        const adopt = data.settings.sync.adopt, m = L.mergeRemote(data, st.view, adopt);
+        behind = behind || m.behind;
+        op(d => { applyPeer(d, st.view, adopt); d.settings.sync.peerAt = st.at; d.settings.sync.adopt = false; });
+        changed = true;
+      }
+      if (changed) await commit(true, true);
+      if (behind) publishState();
+      sync.error = null;
+    } catch (e) { sync.error = e.message; }
+    sync.busy = false;
+  }
+
+  // Lecture du QR code du PC avec la caméra (jsQR, open source).
+  function scanCode() {
+    return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(stream => new Promise(resolve => {
+      const box = document.createElement('div');
+      box.className = 'scanner';
+      box.innerHTML = '<video playsinline muted></video><p>Vise le QR code affiché sur ton PC</p><button class="btn ghost" type="button">Annuler</button>';
+      document.body.append(box);
+      const video = box.querySelector('video'), canvas = document.createElement('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
+      video.srcObject = stream; video.play();
+      let done = false;
+      const stop = val => { if (done) return; done = true; stream.getTracks().forEach(t => t.stop()); box.remove(); resolve(val); };
+      box.querySelector('button').onclick = () => stop(null);
+      (function frame() {
+        if (done) return;
+        if (video.readyState >= 2) {
+          canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height), qr = jsQR(img.data, img.width, img.height);
+          if (qr && qr.data) return stop(qr.data);
+        }
+        requestAnimationFrame(frame);
+      })();
+    }));
   }
 
   // ---------- Notifications programmées ----------
@@ -140,8 +212,8 @@
         const r = L.messageToItem(m, new Date(), k.name || 'Ton proche');
         const isNew = !data[r.coll].some(x => x.id === r.item.id);
         op(d => { if (!d[r.coll].some(x => x.id === r.item.id)) d[r.coll].push(JSON.parse(JSON.stringify(r.item))); });
-        if (isNew) {
-          notifyNow(r.title, r.body, 'perso');
+        if (isNew) notifyNow(r.title, r.body, 'perso');
+        if (isNew && !data.settings.sync.peerAt) { // appairé : c'est le PC qui répond « reçu »
           fetch(server(), { method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ topic: k.topic, title: '✓ Reçu par Boussole', message: r.ack, tags: ['boussole', 'white_check_mark'] }) }).catch(() => {});
         }
@@ -156,6 +228,7 @@
 
   const ready = (async () => {
     data = await load();
+    lastSaved = JSON.parse(JSON.stringify(data));
     planAt = data.planAt ? new Date(data.planAt) : null;
     try {
       const perm = await LocalNotifications.checkPermissions();
@@ -169,11 +242,15 @@
       else if ((kind === 'reminder' || kind === 'nag') && ev.actionId === 'snooze') await api.reminder(ref, '10');
       else emit('goto', { reminder: 'rappels', nag: 'rappels', task: 'aujourdhui', event: 'agenda', daily: 'soir' }[kind] || 'aujourdhui');
     });
-    App.addListener('appStateChange', ({ isActive }) => { if (isActive) { reschedule(); pollMessages(); emit('data', data); } });
+    // Au retour dans l'appli : on dit « coucou » au PC, on récupère ses changements et on envoie les nôtres.
+    const wake = () => { if (syncCfg()) { Sync.hello(syncCfg()).catch(() => {}); publishState(); } pollSync(); };
+    App.addListener('appStateChange', ({ isActive }) => { if (isActive) { reschedule(); pollMessages(); wake(); emit('data', data); } });
     App.addListener('backButton', () => emit('back'));
     reschedule();
     pollMessages();
     setInterval(pollMessages, 30000);
+    wake();
+    setInterval(pollSync, 20000);
     return data;
   })();
 
@@ -214,6 +291,22 @@
     open: view => emit('goto', view),
     on: (ch, fn) => { (listeners[ch] ||= []).push(fn); },
     hideMain: () => App.minimizeApp(),
+    scanCode,
+    syncJoin: async code => {
+      await ready;
+      let c;
+      try { c = JSON.parse(atob(code.trim())); } catch { return { error: 'Code illisible : vérifie qu\'il est complet.' }; }
+      if (!c.t || !c.k) return { error: 'Ce code ne vient pas de Boussole.' };
+      const deviceId = 'tel-' + Math.random().toString(36).slice(2, 8);
+      op(d => { d.settings.sync = { topic: c.t, key: c.k, server: c.s || 'https://ntfy.sh', deviceId, lastId: '', adopt: true, peerAt: '' }; });
+      await commit(true, true);
+      await Sync.hello(syncCfg()).catch(() => {});
+      for (const ms of [4000, 9000, 16000, 30000]) setTimeout(pollSync, ms); // premiers échanges rapides
+      return { ok: true };
+    },
+    syncUnpair: async () => { await ready; op(d => { d.settings.sync = { ...L.DEFAULT_SETTINGS.sync }; }); await commit(true, true); },
+    syncInfo: async () => { await ready; return { paired: !!syncCfg(), peerAt: data.settings.sync.peerAt, last: sync.last, error: sync.error }; },
+    syncNow: async () => { await ready; await publishState(); await pollSync(); return { peerAt: data.settings.sync.peerAt, last: sync.last, error: sync.error }; },
     focusAlarm: async (at, title, label, sphere) => {
       await LocalNotifications.cancel({ notifications: [{ id: 424242 }] }).catch(() => {});
       if (!at) return;

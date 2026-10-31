@@ -128,7 +128,7 @@ function render() {
   v.innerHTML = `<div class="wrap ${view === 'agenda' ? 'wide' : ''}">${MOBILE ? `<div class="mobile-top">${sphereSwitch()}</div>` : ''}${PAGES[view]()}</div>`;
   renderSheet();
   updateFocusUI();
-  if (view === 'reglages') { fillBackupStatus(); fillLinkStatus(); fillUpdateStatus(); }
+  if (view === 'reglages') { fillBackupStatus(); fillLinkStatus(); fillUpdateStatus(); fillSyncStatus(); }
   if (view === 'agenda') afterAgendaRender();
 }
 
@@ -833,6 +833,23 @@ function pageSettings() {
       ${row('Raccourci du vide-tête', inp('shortcut'), shortcutOk ? '<span class="ok">Raccourci actif.</span>' : '<span class="warn">Ce raccourci est déjà pris. Essaie Alt+Shift+Space ou Control+Alt+N.</span>')}
     </section>
 
+    <section class="pc-only"><h2 class="sec-title">Téléphone Android</h2>
+      ${s.sync.topic ? `
+        ${row('Synchronisation', '<span class="row"><button type="button" class="btn small soft" data-act="syncNow">Synchroniser maintenant</button><button type="button" class="btn small ghost" data-act="syncPair">Afficher le QR code</button><button type="button" class="link" data-act="syncUnpair">Désappairer</button></span>', '<span id="sync-status"></span>')}`
+        : row('Synchroniser avec Boussole Android', '<button type="button" class="btn small soft" data-act="syncPair">Appairer mon téléphone</button>',
+          'Tâches, rappels, agenda, notes et réglages des deux côtés. Chiffré : ntfy ne peut rien lire.')}
+      <div id="pair-box"></div>
+    </section>
+
+    <section class="android-only"><h2 class="sec-title">Synchro avec le PC</h2>
+      ${s.sync.topic ? `
+        ${row('Synchronisation', '<span class="row"><button type="button" class="btn small soft" data-act="syncNow">Synchroniser maintenant</button><button type="button" class="link" data-act="syncUnpair">Désappairer</button></span>', '<span id="sync-status"></span>')}`
+        : `<p class="sub" style="margin:0 0 12px">Sur ton PC : Réglages > Téléphone Android > « Appairer mon téléphone ». Puis scanne le QR code affiché.</p>
+          <div class="row"><button type="button" class="btn" data-act="syncScan">Scanner le QR code du PC</button></div>
+          <label class="f" style="margin-top:14px">Ou colle le code affiché sous le QR<textarea id="pair-code" rows="3" autocomplete="off"></textarea></label>
+          <div class="row" style="margin-top:8px"><button type="button" class="btn small ghost" data-act="syncPaste">Appairer avec ce code</button></div>`}
+    </section>
+
     <section class="android-only"><h2 class="sec-title">Notifications Android</h2>
       ${row('Autoriser les notifications', '<button type="button" class="btn small soft" data-act="androidPerm">Autoriser</button>', 'Sans ça, rien ne peut sonner.')}
       ${row('Rappels pile à l\'heure', '<button type="button" class="btn small ghost" data-act="androidExact">Ouvrir le réglage</button>', 'Autorise les « alarmes exactes » pour Boussole.')}
@@ -1002,6 +1019,31 @@ const ACT = {
   },
   updateCheck: async () => { toast('Je regarde s\'il y a une nouvelle version…'); fillUpdateStatus(await api.updateCheck()); },
   updateInstall: () => api.updateInstall(),
+  syncPair: async () => {
+    const r = await api.syncPair();
+    render();
+    $('#pair-box').innerHTML = `<div class="pair">
+      <img src="${r.qr}" alt="QR code d'appairage" width="240" height="240">
+      <ol class="howto">
+        <li>Sur ton téléphone, ouvre <b>Boussole</b>, puis <b>Plus > Réglages > Synchro avec le PC</b>.</li>
+        <li>Touche <b>« Scanner le QR code du PC »</b> et vise ce QR code.</li>
+        <li>C'est tout : tes données et réglages arrivent sur le téléphone en quelques secondes.</li>
+      </ol>
+      <p class="hint">Sans caméra : copie ce code et colle-le dans le téléphone. <b>Garde-le secret</b>, c'est la clé de tes données.<br>
+        <code id="pair-code-text">${esc(r.code)}</code> <button type="button" class="btn small ghost" data-act="copyText" data-target="pair-code-text">Copier</button></p>
+    </div>`;
+  },
+  syncUnpair: async () => {
+    if (!confirm('Désappairer ? Les deux appareils gardent leurs données, mais ne se synchronisent plus.')) return;
+    await api.syncUnpair();
+    toast('Désappairé.');
+  },
+  syncNow: async () => { toast('Synchronisation…'); fillSyncStatus(await api.syncNow()); },
+  syncScan: async () => {
+    try { const code = await api.scanCode(); if (code) await joinWith(code); }
+    catch { toast('Caméra inaccessible : autorise-la, ou colle le code.', 5000); }
+  },
+  syncPaste: () => { const code = ($('#pair-code').value || '').trim(); if (code) joinWith(code); },
   two: d => { const x = task(d.id); fStart(2, x.firstStep || x.title); },
   focusTask: d => { const x = task(d.id); fStart(S().focusDefault, x.title); },
 
@@ -1079,6 +1121,21 @@ const ACT = {
     if (r.ok) toast('Données restaurées.'); else if (r.error) toast(r.error);
   },
 };
+
+async function fillSyncStatus(info) {
+  const el = $('#sync-status');
+  if (!el || !api.syncInfo) return;
+  const s = info || await api.syncInfo(), other = MOBILE ? 'le PC' : 'le téléphone';
+  el.innerHTML = s.error ? `<span class="warn">Problème : ${esc(s.error)}</span>`
+    : s.peerAt ? `<span class="ok">Connecté. Dernier état reçu de ${other} : ${cap(rel(new Date(s.peerAt)))}.</span>`
+    : `En attente de ${other}…${MOBILE ? ' Laisse Boussole ouverte sur le PC.' : ' Scanne le QR code avec Boussole Android.'}`;
+}
+
+async function joinWith(code) {
+  const r = await api.syncJoin(code);
+  if (r.error) { toast(r.error, 5000); return; }
+  toast('Appairé ! Je récupère tes données du PC…', 4000);
+}
 
 async function fillLinkStatus() {
   const info = await api.linkInfo();

@@ -187,8 +187,44 @@ assert.deepStrictEqual(plan.map(p => [p.kind, p.at]).slice(0, 2), [['event', d('
 plan = planOf({ settings: { ...P, checkins: '13:00' }, fired: { 'checkin-13:00': '2026-10-30' } });
 assert.deepStrictEqual(plan.slice(0, 2).map(p => p.at), [d('2026-10-31T13:00'), d('2026-11-01T13:00')]);
 
+// Synchro : horodatage local, suppression, fusion « le plus récent gagne », adoption des réglages.
+const t0 = d('2026-11-01T10:00'), t1 = d('2026-11-01T11:00'), t2 = d('2026-11-01T12:00');
+const pc0 = L.normalize({ settings: { prenom: 'A' }, tasks: [{ id: 'a', title: 'Pain' }, { id: 'b', title: 'Lait' }] });
+const pc1 = L.stamp(L.normalize({}), JSON.parse(JSON.stringify(pc0)), t0);
+assert.ok(pc1.tasks.every(t => t.updatedAt === t0.toISOString()));
+assert.strictEqual(pc1.settingsU.prenom, t0.toISOString());
+const pc2 = JSON.parse(JSON.stringify(pc1)); pc2.tasks = pc2.tasks.filter(t => t.id !== 'b'); pc2.tasks[0].title = 'Pain complet';
+L.stamp(pc1, pc2, t1);
+assert.strictEqual(pc2.tasks[0].updatedAt, t1.toISOString()); assert.strictEqual(pc2.deleted['tasks:b'], t1.toISOString());
+// Le téléphone avait encore « Lait » (ancien) et « Pain » modifié plus tôt ; il ajoute « Œufs ».
+const ph = L.normalize({ tasks: [{ id: 'a', title: 'Pain bio', updatedAt: t0.toISOString() }, { id: 'b', title: 'Lait', updatedAt: t0.toISOString() }, { id: 'c', title: 'Œufs', updatedAt: t2.toISOString() }] });
+const m1 = L.mergeRemote(ph, L.syncView(pc2));
+assert.deepStrictEqual(m1.data.tasks.map(t => t.title).sort(), ['Pain complet', 'Œufs']);
+assert.strictEqual(m1.changed, true); assert.strictEqual(m1.behind, true); // le PC n'a pas « Œufs »
+const m2 = L.mergeRemote(pc2, L.syncView(m1.data));
+assert.deepStrictEqual(m2.data.tasks.map(t => t.title).sort(), ['Pain complet', 'Œufs']); assert.strictEqual(m2.behind, false);
+assert.strictEqual(L.mergeRemote(m2.data, L.syncView(m1.data)).changed, false); // plus rien à échanger
+// Un élément venu de l'autre appareil garde sa date ; les réglages propres à l'appareil ne voyagent pas.
+const recv = JSON.parse(JSON.stringify(m1.data)); L.stamp(ph, recv, t2);
+assert.strictEqual(recv.tasks.find(t => t.id === 'a').updatedAt, t1.toISOString());
+assert.ok(!('shortcut' in L.syncView(pc2).settings) && !('sync' in L.syncView(pc2).settings));
+// Une copie ancienne renvoyée par l'interface (même contenu, ancienne date) ne fait pas reculer la date.
+const stale = JSON.parse(JSON.stringify(pc2)); stale.tasks[0].updatedAt = t0.toISOString();
+L.stamp(pc2, stale, t2);
+assert.strictEqual(stale.tasks[0].updatedAt, t1.toISOString());
+// Premier appairage : le téléphone adopte les réglages du PC, mais garde sa propre position de lecture des messages.
+const phone = L.normalize({ settings: { kelly: { lastId: 'tel', since: 5 } } });
+const ad = L.mergeRemote(phone, L.syncView(L.normalize({ settings: { prenom: 'A', kelly: { enabled: true, topic: 'k', lastId: 'pc' } } })), true);
+assert.strictEqual(ad.data.settings.prenom, 'A'); assert.strictEqual(ad.data.settings.kelly.topic, 'k'); assert.strictEqual(ad.data.settings.kelly.lastId, 'tel');
+
 // Données abîmées ou vides → structure saine.
 assert.strictEqual(L.normalize(null).settings.phone.server, 'https://ntfy.sh');
 assert.strictEqual(L.normalize({ settings: { modules: { soir: false } } }).settings.modules.focus, true);
 
-console.log('Tous les tests passent.');
+// Chiffrement : aller-retour, et une mauvaise clé échoue.
+(async () => {
+  const key = L.newKey(), box = await L.encrypt(key, { a: 'Été' });
+  assert.deepStrictEqual(await L.decrypt(key, box), { a: 'Été' });
+  await assert.rejects(L.decrypt(L.newKey(), box));
+  console.log('Tous les tests passent.');
+})().catch(e => { console.error(e); process.exit(1); });

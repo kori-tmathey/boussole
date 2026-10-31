@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const L = require('./logic');
 const { autoUpdater } = require('electron-updater');
+const Sync = require('./sync');
 
 app.setAppUserModelId('fr.theo.boussole');
 if (process.env.BOUSSOLE_DATA) app.setPath('userData', process.env.BOUSSOLE_DATA); // essais sans toucher aux vraies données
@@ -62,7 +63,11 @@ function backupCloud() {
   catch (e) { cloud.error = e.message; }
 }
 
+let lastSaved = null; // état au dernier enregistrement : sert à dater ce qui a changé (synchro)
+
 function save() {
+  L.stamp(lastSaved || L.normalize({}), data, new Date());
+  lastSaved = JSON.parse(JSON.stringify(data));
   const f = FILE(), tmp = f + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(data, null, 1));
   if (fs.existsSync(f)) fs.copyFileSync(f, f + '.bak');
@@ -72,9 +77,57 @@ function save() {
   if (data.settings.backupDir && !cloud.timer) cloud.timer = setTimeout(backupCloud, 60000);
 }
 
-function commit(except) {
+function commit(except, fromPeer = false) {
   save();
   for (const w of [win, mini]) if (w && !w.isDestroyed() && w.webContents !== except) w.webContents.send('data', data);
+  if (!fromPeer) schedulePublish();
+}
+
+// ---------- Synchro avec le téléphone (chiffrée, via ntfy) ----------
+
+const sync = { timer: null, busy: false, last: null, error: null };
+const syncCfg = () => { const s = data.settings.sync; return s.topic && s.key ? { ...s, server: s.server || ntfyServer() } : null; };
+
+function schedulePublish() {
+  if (!syncCfg()) return;
+  clearTimeout(sync.timer);
+  sync.timer = setTimeout(publishState, 4000); // regroupe les modifications rapprochées
+}
+
+async function publishState() {
+  const cfg = syncCfg();
+  if (!cfg) return;
+  try { await Sync.publish(cfg, data); sync.last = new Date().toISOString(); sync.error = null; }
+  catch (e) { sync.error = e.message; }
+}
+
+// Fusion rejouable (mainOp) : appliquée aussi sur une écriture en retard de l'interface.
+function applyPeer(d, view, adopt) {
+  const m = L.mergeRemote(d, view, adopt).data;
+  for (const k of ['tasks', 'reminders', 'events', 'ideas', 'moods', 'wins', 'nights', 'deleted', 'settingsU']) d[k] = m[k];
+  for (const [k, v] of Object.entries(m.settings)) if (!['sync', 'phone', 'shortcut', 'autostart', 'startHidden', 'closeToTray', 'backupDir', 'textScale'].includes(k)) d.settings[k] = v;
+}
+
+async function pollSync() {
+  const cfg = syncCfg();
+  if (!cfg || sync.busy) return;
+  sync.busy = true;
+  try {
+    const got = await Sync.poll(cfg, cfg.lastId);
+    let changed = got.lastId !== cfg.lastId, behind = got.hellos > 0;
+    if (changed) mainOp(d => { d.settings.sync.lastId = got.lastId; });
+    for (const st of got.states) {
+      const m = L.mergeRemote(data, st.view);
+      behind = behind || m.behind;
+      if (m.changed) { journal(`synchro : changements reçus du téléphone`); mainOp(d => applyPeer(d, st.view, false)); }
+      mainOp(d => { d.settings.sync.peerAt = st.at; });
+      changed = true;
+    }
+    if (changed) commit(null, true);
+    if (behind) publishState();
+    sync.error = null;
+  } catch (e) { sync.error = e.message; }
+  sync.busy = false;
 }
 
 function mainOp(fn) {
@@ -148,6 +201,7 @@ const ntfyPost = body => fetch(ntfyServer(), { method: 'POST', headers: { 'Conte
 async function pushPhone(title, body, sphere, mode) {
   const p = data.settings.phone, sp = sphere && data.settings.spheres[sphere];
   if (!p.enabled || !p.topic) return;
+  if (data.settings.sync.peerAt) return; // l'appli Android est connectée : elle sonne elle-même
   const discreet = p.detail === 'discret';
   try {
     const r = await ntfyPost({
@@ -355,6 +409,29 @@ function captureSphere() {
 }
 ipcMain.handle('capture-sphere', () => captureSphere());
 
+// Appairage : un code (et son QR) contient le serveur, le sujet secret et la clé de chiffrement.
+ipcMain.handle('sync-pair', async () => {
+  if (!syncCfg()) {
+    const rand = n => Array.from(require('crypto').randomBytes(n), b => (b % 36).toString(36)).join('');
+    const cfg = { topic: 'boussole-sync-' + rand(16), key: L.newKey(), deviceId: 'pc-' + rand(6), server: ntfyServer(), lastId: '', adopt: false, peerAt: '' };
+    mainOp(d => { d.settings.sync = { ...cfg }; });
+    commit(null, true);
+    journal('synchro : appairage créé');
+  }
+  const s = data.settings.sync;
+  const code = Buffer.from(JSON.stringify({ v: 1, s: ntfyServer(), t: s.topic, k: s.key })).toString('base64');
+  const qr = await require('qrcode').toDataURL(code, { margin: 1, width: 300, color: { dark: '#1D2C36', light: '#FFFFFF' } });
+  publishState();
+  return { code, qr };
+});
+ipcMain.handle('sync-unpair', () => {
+  mainOp(d => { d.settings.sync = { ...L.DEFAULT_SETTINGS.sync }; });
+  commit(null, true);
+  journal('synchro : désappairé');
+});
+ipcMain.handle('sync-info', () => ({ paired: !!syncCfg(), peerAt: data.settings.sync.peerAt, last: sync.last, error: sync.error }));
+ipcMain.handle('sync-now', async () => { await publishState(); await pollSync(); return { peerAt: data.settings.sync.peerAt, last: sync.last, error: sync.error }; });
+
 ipcMain.handle('backup-info', () => ({ dir: data.settings.backupDir, last: cloud.last, error: cloud.error }));
 ipcMain.handle('link-info', () => ({ phone: { ...phoneStatus }, kelly: { last: kellyStatus.last, error: kellyStatus.error } }));
 ipcMain.handle('phone-test', async () => {
@@ -426,6 +503,7 @@ app.whenReady().then(() => {
   // app.quit() n'arrête pas tout de suite : une deuxième copie ne doit ni lire ni écrire les données.
   if (!primary) return;
   data = load();
+  lastSaved = JSON.parse(JSON.stringify(data));
   createWindow(process.argv.includes('--hidden') || data.settings.startHidden);
   buildTray();
   applySystem();
@@ -434,6 +512,9 @@ app.whenReady().then(() => {
   setInterval(tick, 20000);
   pollMessages();
   setInterval(pollMessages, 30000);
+  if (syncCfg()) { Sync.hello(syncCfg()).catch(() => {}); publishState(); }
+  pollSync();
+  setInterval(pollSync, 15000);
   setupUpdates();
 });
 

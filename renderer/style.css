@@ -518,6 +518,15 @@ html.mobile .list li { flex-wrap: wrap; }
 html.mobile .kind-tag { width: 100%; }
 html.mobile #toast { bottom: calc(86px + env(safe-area-inset-bottom)); max-width: calc(100% - 32px); }
 
+/* ---------- Appairage PC ⇄ téléphone ---------- */
+
+.pair { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; padding: 20px; border-radius: 20px; background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--line); }
+.pair img { border-radius: 12px; background: #fff; padding: 8px; width: 240px; height: 240px; }
+.pair .hint { grid-column: 1 / -1; }
+.pair code { word-break: break-all; }
+.scanner { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; align-content: center; gap: 16px; background: #000; color: #fff; padding: 20px; }
+.scanner video { width: min(92vw, 420px); aspect-ratio: 1; object-fit: cover; border-radius: 20px; outline: 3px solid var(--primary); }
+
 /* ---------- Vide-tête rapide : sphère ---------- */
 
 .capture-row { display: flex; align-items: center; gap: 10px; }

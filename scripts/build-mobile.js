@@ -9,6 +9,8 @@ fs.rmSync(www, { recursive: true, force: true });
 fs.mkdirSync(www, { recursive: true });
 copy('renderer');
 copy('logic.js');
+copy('sync.js');
+copy('node_modules/jsqr/dist/jsQR.js', 'renderer/jsQR.js');
 copy('build/icon.png');
 for (const pkg of ['@fontsource/atkinson-hyperlegible', '@fontsource-variable/bricolage-grotesque']) {
   for (const f of ['400.css', '700.css', 'index.css', 'files']) {
@@ -25,6 +27,6 @@ let html = fs.readFileSync(page, 'utf8');
 html = html
   .replace('<meta charset="utf-8">', '<meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">')
   .replace("img-src 'self' data:", "img-src 'self' data:; connect-src 'self' https:")
-  .replace('<script src="../logic.js"></script>', '<script src="../logic.js"></script>\n  <script src="mobile-api.js"></script>');
+  .replace('<script src="../logic.js"></script>', '<script src="../logic.js"></script>\n  <script src="../sync.js"></script>\n  <script src="jsQR.js"></script>\n  <script src="mobile-api.js"></script>');
 fs.writeFileSync(page, html);
 console.log('mobile/www prêt');

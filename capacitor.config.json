@@ -6,6 +6,9 @@
     "backgroundColor": "#E6EDEF"
   },
   "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
     "LocalNotifications": {
       "smallIcon": "ic_stat_boussole",
       "iconColor": "#2B7A7E"

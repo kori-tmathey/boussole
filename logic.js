@@ -53,6 +53,8 @@
     // Téléphone et messages d'un proche, via ntfy (gratuit, open source)
     phone: { enabled: false, server: 'https://ntfy.sh', topic: '', detail: 'full' },
     kelly: { enabled: false, name: '', topic: '', since: 0, lastId: '' },
+    // Appairage PC ⇄ téléphone (propre à chaque appareil)
+    sync: { topic: '', key: '', deviceId: '', lastId: '', adopt: false, peerAt: '' },
   };
 
   const pad = n => String(n).padStart(2, '0');
@@ -489,6 +491,111 @@
     };
   }
 
+  // ---------- Synchronisation PC ⇄ téléphone ----------
+
+  // Collections synchronisées et clé de chaque élément.
+  const SYNC_COLLS = {
+    tasks: x => x.id, reminders: x => x.id, events: x => x.id, ideas: x => x.id,
+    moods: x => x.at, wins: x => `${x.at}|${x.text}`, nights: x => x.at,
+  };
+  // Réglages propres à chaque appareil : jamais synchronisés.
+  const DEVICE_KEYS = ['shortcut', 'autostart', 'startHidden', 'closeToTray', 'backupDir', 'textScale', 'phone', 'sync'];
+  const bare = x => { const { updatedAt, ...rest } = x; return JSON.stringify(rest); };
+
+  // Ce qui part vers l'autre appareil.
+  function syncView(d) {
+    const out = { deleted: d.deleted || {}, settingsU: d.settingsU || {}, settings: {} };
+    for (const c of Object.keys(SYNC_COLLS)) out[c] = d[c] || [];
+    for (const [k, v] of Object.entries(d.settings)) if (!DEVICE_KEYS.includes(k)) out.settings[k] = v;
+    return out;
+  }
+
+  // Avant d'enregistrer : date les éléments modifiés localement, garde une trace des suppressions.
+  // Un élément qui arrive de l'autre appareil garde sa propre date.
+  function stamp(prev, next, now) {
+    const iso = now.toISOString();
+    next.deleted = { ...(next.deleted || {}) };
+    next.settingsU = { ...(next.settingsU || {}) };
+    for (const [c, key] of Object.entries(SYNC_COLLS)) {
+      const before = new Map((prev[c] || []).map(x => [key(x), x]));
+      const seen = new Set();
+      for (const x of next[c] || []) {
+        const k = key(x), p = before.get(k);
+        seen.add(k);
+        if (!p) { if (!x.updatedAt) x.updatedAt = iso; continue; } // nouveau (local : maintenant ; reçu : sa date)
+        if ((x.updatedAt || '') > (p.updatedAt || '')) continue; // reçu de l'autre appareil, plus récent
+        x.updatedAt = bare(p) !== bare(x) ? iso : p.updatedAt; // une copie ancienne ne fait pas reculer la date
+      }
+      for (const k of before.keys()) if (!seen.has(k) && !next.deleted[`${c}:${k}`]) next.deleted[`${c}:${k}`] = iso;
+    }
+    const prevU = prev.settingsU || {};
+    for (const k of Object.keys(next.settings)) {
+      if (DEVICE_KEYS.includes(k) || (next.settingsU[k] || '') > (prevU[k] || '')) continue;
+      const changedHere = JSON.stringify(prev.settings && prev.settings[k]) !== JSON.stringify(next.settings[k]);
+      if (changedHere) next.settingsU[k] = iso; else if (prevU[k]) next.settingsU[k] = prevU[k];
+    }
+    const limit = addDays(now, -60).toISOString();
+    for (const [k, t] of Object.entries(next.deleted)) if (t < limit) delete next.deleted[k];
+    return next;
+  }
+
+  // Fusionne l'état reçu de l'autre appareil : élément par élément, le plus récent gagne.
+  // adopt : premier appairage du téléphone, il prend les réglages du PC.
+  // Renvoie aussi si l'autre appareil est en retard (il faudra lui renvoyer notre état).
+  function mergeRemote(local, remote, adopt = false) {
+    const d = JSON.parse(JSON.stringify(local));
+    const del = { ...(local.deleted || {}) };
+    for (const [k, t] of Object.entries(remote.deleted || {})) if (!del[k] || t > del[k]) del[k] = t;
+    let changed = false, behind = false;
+    for (const [c, key] of Object.entries(SYNC_COLLS)) {
+      const mine = new Map((d[c] || []).map(x => [key(x), x])), theirs = new Map((remote[c] || []).map(x => [key(x), x]));
+      const out = [];
+      for (const [k, x] of mine) {
+        const r = theirs.get(k), tomb = del[`${c}:${k}`];
+        if (r) {
+          if ((r.updatedAt || '') > (x.updatedAt || '')) { out.push(r); changed = true; }
+          else { out.push(x); if ((x.updatedAt || '') > (r.updatedAt || '')) behind = true; }
+        } else if (tomb && tomb >= (x.updatedAt || '')) changed = true; // supprimé sur l'autre appareil
+        else { out.push(x); behind = true; }
+      }
+      for (const [k, r] of theirs) {
+        if (mine.has(k)) continue;
+        const tomb = del[`${c}:${k}`];
+        if (tomb && tomb >= (r.updatedAt || '')) { behind = true; continue; }
+        out.push(r); changed = true;
+      }
+      d[c] = out;
+    }
+    d.deleted = del;
+    d.settingsU = { ...(local.settingsU || {}) };
+    for (const [k, v] of Object.entries(remote.settings || {})) {
+      if (DEVICE_KEYS.includes(k)) continue;
+      const rt = (remote.settingsU || {})[k] || '', lt = d.settingsU[k] || '';
+      if (adopt || rt > lt) {
+        if (JSON.stringify(d.settings[k]) !== JSON.stringify(v)) changed = true;
+        d.settings[k] = k === 'kelly' ? { ...v, lastId: d.settings.kelly.lastId, since: d.settings.kelly.since } : v;
+        d.settingsU[k] = rt || lt;
+      } else if (lt > rt) behind = true;
+    }
+    return { data: d, changed, behind };
+  }
+
+  // Chiffrement de bout en bout (AES-GCM 256, WebCrypto : Electron et Android).
+  const b64 = bytes => { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); };
+  const unb64 = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+  const aesKey = keyB64 => globalThis.crypto.subtle.importKey('raw', unb64(keyB64), 'AES-GCM', false, ['encrypt', 'decrypt']);
+  const newKey = () => b64(globalThis.crypto.getRandomValues(new Uint8Array(32)));
+  async function encrypt(keyB64, obj) {
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(keyB64), new TextEncoder().encode(JSON.stringify(obj))));
+    const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
+    return out;
+  }
+  async function decrypt(keyB64, bytes) {
+    const pt = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, await aesKey(keyB64), bytes.slice(12));
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+
   function normalize(d) {
     d = d && typeof d === 'object' ? d : {};
     const given = d.settings || {};
@@ -501,11 +608,13 @@
     if (!Array.isArray(s.workDays)) s.workDays = [...DEFAULT_SETTINGS.workDays];
     s.phone = { ...DEFAULT_SETTINGS.phone, ...(given.phone || {}) };
     s.kelly = { ...DEFAULT_SETTINGS.kelly, ...(given.kelly || {}) };
+    s.sync = { ...DEFAULT_SETTINGS.sync, ...(given.sync || {}) };
     const arr = k => (Array.isArray(d[k]) ? d[k] : []);
     return {
       rev: Number(d.rev) || 0,
       settings: s, tasks: arr('tasks'), reminders: arr('reminders'), events: arr('events'), ideas: arr('ideas'),
       moods: arr('moods'), wins: arr('wins'), nights: arr('nights'), fired: d.fired || {},
+      deleted: d.deleted || {}, settingsU: d.settingsU || {}, ...(d.planAt ? { planAt: d.planAt } : {}),
     };
   }
 
@@ -527,6 +636,7 @@
     mergeIncoming, sphereOf, isWork, autoSphere, notifyMode, taskStart, eventStart, eventEnd,
     taskShouldNotify, eventShouldNotify, agendaItems, layoutDay,
     repeatMatches, eventOccurrences, completeTask, findConflict, search, parseMessage, planNotifications, messageToItem,
+    syncView, stamp, mergeRemote, encrypt, decrypt, newKey, b64, unb64,
   };
   if (typeof module !== 'undefined') module.exports = L; else window.L = L;
 })();
