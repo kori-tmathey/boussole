@@ -1125,10 +1125,10 @@ const ACT = {
 async function fillSyncStatus(info) {
   const el = $('#sync-status');
   if (!el || !api.syncInfo) return;
-  const s = info || await api.syncInfo(), other = MOBILE ? 'le PC' : 'le téléphone';
+  const s = info || await api.syncInfo(), other = MOBILE ? 'du PC' : 'du téléphone';
   el.innerHTML = s.error ? `<span class="warn">Problème : ${esc(s.error)}</span>`
-    : s.peerAt ? `<span class="ok">Connecté. Dernier état reçu de ${other} : ${cap(rel(new Date(s.peerAt)))}.</span>`
-    : `En attente de ${other}…${MOBILE ? ' Laisse Boussole ouverte sur le PC.' : ' Scanne le QR code avec Boussole Android.'}`;
+    : s.peerAt ? `<span class="ok">Connecté. Dernier état reçu ${other} : ${rel(new Date(s.peerAt))}.</span>`
+    : `En attente ${other}…${MOBILE ? ' Laisse Boussole ouverte sur le PC.' : ' Scanne le QR code avec Boussole Android.'}`;
 }
 
 async function joinWith(code) {
